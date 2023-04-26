@@ -3,6 +3,7 @@
 // swiftlint:disable file_length
 // swiftlint:disable type_body_length
 // swiftlint:disable line_length
+// swiftlint:disable identifier_name
 
 // this class used a bunch of implicit non-null patterns for member variables. not worth refactoring to appease lint.
 // swiftlint:disable force_unwrapping
@@ -38,12 +39,22 @@ public class AppController: NSObject, AppLoaderTaskDelegate, ErrorRecoveryDelega
   private static let ErrorDomain = "EXUpdatesAppController"
   private static let EXUpdatesEventName = "Expo.nativeUpdatesEvent"
 
+  // Events for the legacy UpdateEvent JS listener
   public static let UpdateAvailableEventName = "updateAvailable"
   public static let NoUpdateAvailableEventName = "noUpdateAvailable"
   public static let ErrorEventName = "error"
 
+  // Events that will be used to track state changes
+  public static let CheckForUpdate_StartEventName = "CheckForUpdate_Start"
+  public static let CheckForUpdate_Complete_UpdateAvailableEventName = "CheckForUpdate_Complete_UpdateAvailable"
+  public static let CheckForUpdate_Complete_NoUpdateAvailableEventName = "CheckForUpdate_Complete_NoUpdateAvailable"
+  public static let FetchUpdate_StartEventName = "FetchUpdate_Start"
+  public static let FetchUpdate_CompleteEventName = "FetchUpdate_Complete"
+  public static let FetchUpdate_AssetDownloadedEventName = "FetchUpdate_AssetDownloaded"
+
+  // Notification names observed by this class
   public static let UpdateEventNotificationName = "EXUpdates_UpdateEventNotification"
-  public static let CheckForUpdateNotificationName = "EXUpdates_CheckForUpdateNotification"
+  public static let ShouldCheckForUpdateNotificationName = "EXUpdates_ShouldCheckForUpdateNotification"
 
   /**
    Delegate which will be notified when EXUpdates has an update ready to launch and
@@ -105,7 +116,7 @@ public class AppController: NSObject, AppLoaderTaskDelegate, ErrorRecoveryDelega
 
   public var remoteLoadStatus: RemoteLoadStatus
 
-  private let logger: UpdatesLogger
+  internal let logger: UpdatesLogger
 
   public static let sharedInstance = AppController()
 
@@ -243,7 +254,7 @@ public class AppController: NSObject, AppLoaderTaskDelegate, ErrorRecoveryDelega
 
     purgeUpdatesLogsOlderThanOneDay()
     initializeUpdateEventNotificationHandler()
-    initializeCheckForUpdateNotificationHandler()
+    initializeShouldCheckForUpdateNotificationHandler()
 
     do {
       try initializeUpdatesDirectory()
@@ -334,27 +345,27 @@ public class AppController: NSObject, AppLoaderTaskDelegate, ErrorRecoveryDelega
     return launcher?.launchedUpdate
   }
 
-  // MARK: - Notifications for checkForUpdate
+  // MARK: - Notifications for shouldCheckForUpdate
 
   /**
-   Observer for notifications indicating that the app wants to check for an available
+   Observer for notifications indicating that the app should check for an available
    update.
 
    For now, we just log the notifications.
    */
-  private func initializeCheckForUpdateNotificationHandler() {
-    NotificationCenter.default.addObserver(self, selector: #selector(handleCheckForUpdateNotification(notification:)), name: Notification.Name(AppController.CheckForUpdateNotificationName), object: nil)
+  private func initializeShouldCheckForUpdateNotificationHandler() {
+    NotificationCenter.default.addObserver(self, selector: #selector(handleShouldCheckForUpdateNotification(notification:)), name: Notification.Name(AppController.ShouldCheckForUpdateNotificationName), object: nil)
   }
 
-  public func handleCheckForUpdateNotification(notification: Notification) {
+  public func handleShouldCheckForUpdateNotification(notification: Notification) {
     // TODO: initiate a call to checkForUpdateAsync() here
     // For now, we log that the notification was received
-    logger.debug(message: "CheckForUpdate notification received")
+    logger.debug(message: "ShouldCheckForUpdate notification received")
   }
 
-  public func postCheckForUpdateNotification() {
+  public func postShouldCheckForUpdateNotification() {
     NotificationCenter.default.post(
-      name: Notification.Name(AppController.CheckForUpdateNotificationName),
+      name: Notification.Name(AppController.ShouldCheckForUpdateNotificationName),
       object: nil
     )
   }
@@ -384,8 +395,15 @@ public class AppController: NSObject, AppLoaderTaskDelegate, ErrorRecoveryDelega
       let type = notification.userInfo?["type"] as? String else {
       return
     }
-    // For now, we only support the three types
-    sendEventToBridge(type, body: body)
+    if type == AppController.UpdateAvailableEventName ||
+      type == AppController.NoUpdateAvailableEventName ||
+      type == AppController.ErrorEventName {
+      // For the three legacy UpdateEvent types, we send the events to JS
+      sendEventToBridge(type, body: body)
+    } else {
+      // For now, log the other events
+      logger.debug(message: "UpdateEvent notification \(type), body = \(body)")
+    }
   }
 
   public func postUpdateEventNotification(_ type: String, body: [AnyHashable: Any] = [:]) {
